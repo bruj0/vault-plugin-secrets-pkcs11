@@ -16,26 +16,6 @@ func (b *backend) pathDevices() *framework.Path {
 
 		HelpSynopsis:    "List configured PKCS11 devices",
 		HelpDescription: "List the configured PKCS11 devices available for use.",
-		Fields: map[string]*framework.FieldSchema{
-			"library_path": &framework.FieldSchema{
-				Type:     framework.TypeString,
-				Required: true,
-				Description: `
-	Path to the device pkcs11 library implementation.`,
-			},
-			"slot": &framework.FieldSchema{
-				Type:     framework.TypeString,
-				Required: true,
-				Description: `
-	Slot to use in the device.`,
-			},
-			"pin": &framework.FieldSchema{
-				Type:     framework.TypeString,
-				Required: true,
-				Description: `
-	Pin to login to the Slot.`,
-			},
-		},
 		Callbacks: map[logical.Operation]framework.OperationFunc{
 			logical.ListOperation: b.pathDevicesList,
 		},
@@ -47,19 +27,47 @@ func (b *backend) pathDevicesCRUD() *framework.Path {
 
 		HelpSynopsis:    "Interact with pkcs11 objects stored in a device",
 		HelpDescription: ``,
-		ExistenceCheck:  b.pathDevicesExistenceCheck,
+		Fields: map[string]*framework.FieldSchema{
+			"name": &framework.FieldSchema{
+				Type:     framework.TypeString,
+				Required: true,
+				Description: `
+	Name of the device.`,
+			},
+			"lib_path": &framework.FieldSchema{
+				Type:     framework.TypeString,
+				Required: true,
+				Description: `
+	Path to the device pkcs11 library implementation.`,
+			},
+			"slot": &framework.FieldSchema{
+				Type:     framework.TypeInt,
+				Required: true,
+				Description: `
+	Slot to use in the device.`,
+			},
+			"pin": &framework.FieldSchema{
+				Type:     framework.TypeString,
+				Required: true,
+				Description: `
+	Pin to login to the Slot.`,
+			},
+		},
+		ExistenceCheck: b.pathDevicesExistenceCheck,
 		Callbacks: map[logical.Operation]framework.OperationFunc{
-			logical.ReadOperation:   b.pathDevicesRead,
-			logical.CreateOperation: b.pathDevicesWrite,
-			logical.UpdateOperation: b.pathDevicesWrite,
-			logical.DeleteOperation: b.pathDevicesDelete,
+			logical.ReadOperation:   withFieldValidator(b.pathDevicesRead),
+			logical.CreateOperation: withFieldValidator(b.pathDevicesWrite),
+			logical.UpdateOperation: withFieldValidator(b.pathDevicesWrite),
+			logical.DeleteOperation: withFieldValidator(b.pathDevicesDelete),
 		},
 	}
 }
 
 // pathDevicesExistenceCheck is used to check if a given device exists.
 func (b *backend) pathDevicesExistenceCheck(ctx context.Context, req *logical.Request, d *framework.FieldData) (bool, error) {
+	//b.Logger().Debug("FieldData", "%s", spew.Sdump(d))
 	name := d.Get("name").(string)
+
 	if k, err := b.GetDevice(ctx, req.Storage, name); err != nil || k == nil {
 		return false, nil
 	}
@@ -79,11 +87,10 @@ func (b *backend) pathDevicesRead(ctx context.Context, req *logical.Request, d *
 		return nil, err
 	}
 	data := map[string]interface{}{
-		"name":         k.Name,
-		"lib_path":     k.LibPath,
-		"generate_key": k.GenerateKey,
-		"slot":         k.Slot,
-		"pin":          k.Pin,
+		"name":     k.Name,
+		"lib_path": k.LibPath,
+		"slot":     k.Slot,
+		"pin":      k.Pin,
 	}
 
 	return &logical.Response{
@@ -111,12 +118,29 @@ func (b *backend) pathDevicesWrite(ctx context.Context, req *logical.Request, d 
 	}
 	defer closer()
 	*/
+	nameRaw, ok := d.GetOk("name")
+	if !ok {
+		return nil, errMissingFields("name")
+	}
+	name := nameRaw.(string)
 
-	name := d.Get("name").(string)
-	libPath := d.Get("lib_path").(string)
-	generateKey := d.Get("generate_key").(bool)
-	slot := d.Get("slot").(uint)
-	pin := d.Get("pin").(string)
+	libPathRaw, ok := d.GetOk("lib_path")
+	if !ok {
+		return nil, errMissingFields("lib_path")
+	}
+	libPath := libPathRaw.(string)
+
+	slotRaw, ok := d.GetOk("slot")
+	if !ok {
+		return nil, errMissingFields("slot")
+	}
+	slot := slotRaw.(int)
+
+	pinRaw, ok := d.GetOk("pin")
+	if !ok {
+		return nil, errMissingFields("pin")
+	}
+	pin := pinRaw.(string)
 
 	//Check if name is defined on a update operation and deny it
 	if name != "" && req.Operation == logical.UpdateOperation {
@@ -124,11 +148,10 @@ func (b *backend) pathDevicesWrite(ctx context.Context, req *logical.Request, d 
 	}
 	// Save it
 	entry, err := logical.StorageEntryJSON("devices/"+name, &Device{
-		Name:        name,
-		LibPath:     libPath,
-		GenerateKey: generateKey,
-		Slot:        slot,
-		Pin:         pin,
+		Name:    name,
+		LibPath: libPath,
+		Slot:    slot,
+		Pin:     pin,
 	})
 	if err != nil {
 		return nil, errwrap.Wrapf("failed to create storage entry: {{err}}", err)

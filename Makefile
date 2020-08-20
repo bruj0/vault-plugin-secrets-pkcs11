@@ -14,8 +14,8 @@ LDFLAGS = \
 
 # XC_* are the platforms for cross-compiling. Customize these values to suit
 # your needs.
-XC_OS      = darwin linux windows
-XC_ARCH    = 386 amd64
+XC_OS      = linux
+XC_ARCH    = amd64
 XC_EXCLUDE =
 
 # default is the default make command
@@ -32,12 +32,11 @@ deps:
 # dev builds and installs the plugin for local development
 dev:
 	@env \
-		CGO_ENABLED=0 \
+		CGO_ENABLED=1 \
 		go install \
 			-ldflags="${LDFLAGS}" \
-			./cmd/...
-.PHONY: dev
-
+			./cmd/... && cp $(HOME)/go/bin/vault-plugin-secrets-pkcs11 plugins/pkcs11
+.PHONY: dev 
 # test runs the tests
 test:
 	@go test -timeout=60s -parallel=10 ./...

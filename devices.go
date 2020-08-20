@@ -18,10 +18,9 @@ type Device struct {
 	// Name is the name of the device in Vault.
 	Name string `json:"name"`
 
-	LibPath     string `json:"lib_path"`
-	GenerateKey bool   `json:"generate_key`
-	Slot        uint   `json:slot`
-	Pin         string `json:pin`
+	LibPath string `json:"lib_path"`
+	Slot    int    `json:slot`
+	Pin     string `json:pin`
 }
 
 // Device retrieves the named device from the storage backend, or an error if one does
