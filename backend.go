@@ -41,6 +41,8 @@ type backend struct {
 	ctx       context.Context
 	ctxCancel context.CancelFunc
 	ctxLock   sync.Mutex
+
+	generateLeases bool
 }
 
 // Factory returns a configured instance of the backend.
@@ -56,6 +58,7 @@ func Factory(ctx context.Context, c *logical.BackendConfig) (logical.Backend, er
 func Backend() *backend {
 	var b backend
 
+	b.generateLeases = true
 	b.ClientLifetime = defaultClientLifetime
 	b.ctx, b.ctxCancel = context.WithCancel(context.Background())
 
@@ -66,10 +69,22 @@ func Backend() *backend {
 		Paths: []*framework.Path{
 
 			b.pathDevices(),
+			b.pathDevicesDataCRUD(),
 			b.pathDevicesCRUD(),
 		},
 		Invalidate: b.invalidate,
 		Clean:      b.clean,
+		Secrets: []*framework.Secret{
+			&framework.Secret{
+				Type: "pkcs11",
+
+				Renew: b.pathDevicesDataRead,
+				Revoke: func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+					// This is a no-op
+					return nil, nil
+				},
+			},
+		},
 	}
 
 	return &b
