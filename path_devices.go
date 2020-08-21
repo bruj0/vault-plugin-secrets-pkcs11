@@ -66,7 +66,7 @@ func (b *backend) pathDevicesCRUD() *framework.Path {
 
 // pathDevicesExistenceCheck is used to check if a given device exists.
 func (b *backend) pathDevicesExistenceCheck(ctx context.Context, req *logical.Request, d *framework.FieldData) (bool, error) {
-	b.Logger().Debug("FieldData", "%s", spew.Sdump(d))
+	b.Logger().Debug("pathDevicesExistenceCheck", "FieldData", spew.Sdump(d))
 	name := d.Get("device_name").(string)
 
 	if k, err := b.GetDevice(ctx, req.Storage, name); err != nil || k == nil {
@@ -111,13 +111,7 @@ func (b *backend) pathDevicesList(ctx context.Context, req *logical.Request, d *
 // pathKeysWrite corresponds to PUT/POST devices/create/:name and creates a
 // new GCP KMS key and registers it for use in Vault.
 func (b *backend) pathDevicesWrite(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
-	//TODO: Check that the configuration works
-	/*Client, closer, err := b.Client(req.Storage)
-	if err != nil {
-		return nil, err
-	}
-	defer closer()
-	*/
+
 	nameRaw, ok := d.GetOk("device_name")
 	if !ok {
 		return nil, errMissingFields("device_name")
@@ -146,6 +140,7 @@ func (b *backend) pathDevicesWrite(ctx context.Context, req *logical.Request, d 
 	if name != "" && req.Operation == logical.UpdateOperation {
 		return nil, errImmutable("device_name")
 	}
+
 	// Save it
 	entry, err := logical.StorageEntryJSON("devices/"+name, &Device{
 		LibPath: libPath,
@@ -153,11 +148,23 @@ func (b *backend) pathDevicesWrite(ctx context.Context, req *logical.Request, d 
 		Pin:     pin,
 	})
 	if err != nil {
-		return nil, errwrap.Wrapf("failed to create storage entry: {{err}}", err)
+		return nil, errwrap.Wrapf("pathDevicesWrite: failed to create logical storage entry: {{err}}", err)
 	}
 	if err := req.Storage.Put(ctx, entry); err != nil {
-		return nil, errwrap.Wrapf("failed to write to storage: {{err}}", err)
+		return nil, errwrap.Wrapf("pathDevicesWrite: failed to write to storage: {{err}}", err)
 	}
+
+	// Attempt to connect to the device
+	_, closer, err := b.Pkcs11Client(req.Storage, name)
+
+	if err != nil {
+		// Delete the device from our storage because we couldnt connect
+		if err := req.Storage.Delete(ctx, "devices/"+name); err != nil {
+			return nil, errwrap.Wrapf("pathDevicesWrite: failed to delete from storage: {{err}}", err)
+		}
+		return logical.ErrorResponse("pathDevicesWrite: Error connecting to Device %s", err), nil
+	}
+	defer closer()
 
 	return nil, nil
 }
@@ -176,7 +183,7 @@ func (b *backend) pathDevicesDelete(ctx context.Context, req *logical.Request, d
 	}
 	// Delete the device from our storage
 	if err := req.Storage.Delete(ctx, "devices/"+name); err != nil {
-		return nil, errwrap.Wrapf("failed to delete from storage: {{err}}", err)
+		return nil, errwrap.Wrapf("pathDevicesDelete: failed to delete from storage: {{err}}", err)
 	}
 	return nil, nil
 }

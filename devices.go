@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	ErrdeviceNotFound = errors.New("encryption device not found")
+	ErrdeviceNotFound = errors.New("Error: encryption device not found")
 )
 
 // Device represents a device configuration from the storage backend.

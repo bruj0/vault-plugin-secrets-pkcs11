@@ -6,13 +6,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/hashicorp/errwrap"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
 
 	//"github.com/hashicorp/vault/sdk/logical"
 	//"google.golang.org/api/option"
-
 	"github.com/miekg/pkcs11"
 )
 
@@ -67,9 +67,9 @@ func Backend() *backend {
 		Help:        "The PKCS#11 secrets engine provides object management on supported devices",
 
 		Paths: []*framework.Path{
-
-			b.pathDevices(),
+			b.pathDevicesData(),
 			b.pathDevicesDataCRUD(),
+			b.pathDevices(),
 			b.pathDevicesCRUD(),
 		},
 		Invalidate: b.invalidate,
@@ -145,7 +145,7 @@ func (b *backend) Pkcs11Client(s logical.Storage, deviceName string) (*pkcs11Cli
 	// any connections and create a new client.
 	b.ClientLock.Lock()
 
-	b.Logger().Debug("creating new PKCS11 session for Device %s", deviceName)
+	b.Logger().Debug("Pkcs11Client:", "creating new PKCS11 session for Device", deviceName)
 
 	// Attempt to close an existing client if we have one.
 	b.resetClient()
@@ -156,7 +156,7 @@ func (b *backend) Pkcs11Client(s logical.Storage, deviceName string) (*pkcs11Cli
 		b.ClientLock.Unlock()
 		return nil, nil, err
 	}
-	b.Logger().Debug("Config for device aquierd: %v", config)
+	b.Logger().Debug("Pkcs11Client:", "Config for device aquired", config)
 	client := &pkcs11Client{}
 
 	client.p = pkcs11.New(config.LibPath)
@@ -169,7 +169,62 @@ func (b *backend) Pkcs11Client(s logical.Storage, deviceName string) (*pkcs11Cli
 	if err != nil {
 		return nil, nil, errwrap.Wrapf(fmt.Sprintf("failed to GetSlotList from device %s : {{err}}", deviceName), err)
 	}
-	b.Logger().Debug("Pkcs11Client:", "GetSlotList", "%#v", slots)
+	b.Logger().Debug("Pkcs11Client:", "GetSlotList", slots)
+
+	deviceConfig, err := b.GetDevice(b.ctx, s, deviceName)
+	if err != nil {
+		return nil, nil, err
+	}
+	found := false
+	for k, slot := range slots {
+		switch {
+		case deviceConfig.Slot != 0:
+			//log.Debugf("Checking slot:%08d==%08d,id:%d", slot, *config.Slot, k)
+			if slot == uint(deviceConfig.Slot) {
+				b.Logger().Debug("Pkcs11Client:", "Found slot", slot, "id", k)
+				found = true
+				break
+			}
+			// TODO: implement token label search
+			/*case config.TokenLabel != "":
+			token, err := config.pkcs11Ctx.GetTokenInfo(*config.Slot)
+			log.Debugf("Found config.TokenLabel token=%s", spew.Sdump(token))
+			if err != nil {
+				continue
+			}
+
+			if token.Label == config.TokenLabel {
+				log.Debugf("Found token.Label == config.TokenLabel")
+				found = true
+				break
+			}
+			*/
+		}
+	}
+	if !found {
+		b.Logger().Error("Pkcs11Client", "slot not found; available slots are:", slots)
+		return nil, nil, fmt.Errorf("Slot not found")
+	}
+	//GetTokenInfo from the Slot and show debug
+	token, err := client.p.GetTokenInfo(uint(deviceConfig.Slot))
+	if err != nil {
+		b.Logger().Error("Pkcs11Client", "GetTokenInfo:", err)
+		return nil, nil, err
+	}
+
+	b.Logger().Debug("Pkcs11Client", "GetTokenInfo", spew.Sdump(token))
+
+	client.sess, err = client.p.OpenSession(uint(deviceConfig.Slot), pkcs11.CKF_SERIAL_SESSION|pkcs11.CKF_RW_SESSION)
+	if err != nil {
+		b.Logger().Error("Pkcs11Client", "OpenSession:", err)
+		return nil, nil, err
+	}
+
+	err = client.p.Login(client.sess, pkcs11.CKU_USER, deviceConfig.Pin)
+	if err != nil {
+		b.Logger().Error("Pkcs11Client", "Login:", err)
+		return nil, nil, err
+	}
 	// Cache the client
 	b.Client = client
 	b.ClientCreateTime = time.Now().UTC()
@@ -177,6 +232,7 @@ func (b *backend) Pkcs11Client(s logical.Storage, deviceName string) (*pkcs11Cli
 
 	b.ClientLock.RLock()
 	closer := func() {
+		b.Client.p.Logout(b.Client.sess)
 		b.Client.p.Destroy()
 		b.Client.p.Finalize()
 		b.ClientLock.RUnlock()
