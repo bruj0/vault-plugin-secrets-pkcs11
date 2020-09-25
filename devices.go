@@ -21,6 +21,7 @@ type Device struct {
 	LibPath string `json:"lib_path"`
 	Slot    int    `json:slot`
 	Pin     string `json:pin`
+	ObjID   uint   `json:obj_id`
 }
 
 // Device retrieves the named device from the storage backend, or an error if one does

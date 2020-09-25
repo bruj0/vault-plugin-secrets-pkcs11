@@ -155,7 +155,7 @@ func (b *backend) pathDevicesWrite(ctx context.Context, req *logical.Request, d 
 	}
 
 	// Attempt to connect to the device
-	_, closer, err := b.Pkcs11Client(req.Storage, name)
+	_, closer, err := b.NewPkcs11Client(req.Storage, name)
 
 	if err != nil {
 		// Delete the device from our storage because we couldnt connect
@@ -164,6 +164,7 @@ func (b *backend) pathDevicesWrite(ctx context.Context, req *logical.Request, d 
 		}
 		return logical.ErrorResponse("pathDevicesWrite: Error connecting to Device %s", err), nil
 	}
+
 	defer closer()
 
 	return nil, nil
