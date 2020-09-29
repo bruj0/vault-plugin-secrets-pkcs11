@@ -8,9 +8,6 @@ import (
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/hashicorp/vault/sdk/framework"
-	"github.com/hashicorp/vault/sdk/helper/jsonutil"
-	"github.com/hashicorp/vault/sdk/helper/parseutil"
-	"github.com/hashicorp/vault/sdk/helper/wrapping"
 	"github.com/hashicorp/vault/sdk/logical"
 	//"github.com/miekg/pkcs11"
 )
@@ -64,7 +61,7 @@ func (b *backend) pathDevicesDataCRUD() *framework.Path {
 	}
 }
 
-// pathDevicesExistenceCheck is used to check if a given device exists.
+// pathDevicesExistenceCheck is used to check if a given data key exists.
 func (b *backend) pathDevicesDataExistenceCheck(ctx context.Context, req *logical.Request, d *framework.FieldData) (bool, error) {
 	nameRaw, ok := d.GetOk("device_name")
 	if !ok {
@@ -86,8 +83,7 @@ func (b *backend) pathDevicesDataExistenceCheck(ctx context.Context, req *logica
 	return true, nil
 }
 
-// pathDevicesRead corresponds to GET devices/:name and is used to show
-// information about the device.
+// pathDevicesRead corresponds to GET devices/:device_name/:path and is used to get the contents of the data object
 func (b *backend) pathDevicesDataRead(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
 	nameRaw, ok := d.GetOk("device_name")
 	if !ok {
@@ -101,12 +97,10 @@ func (b *backend) pathDevicesDataRead(ctx context.Context, req *logical.Request,
 	}
 	path := pathRaw.(string)
 
-	key := "devices/" + name + "/" + path
-
 	// Read the path
-	out, err := req.Storage.Get(ctx, key)
+	out, err := b.readData(name, path)
 	if err != nil {
-		return nil, fmt.Errorf("read failed: %v", err)
+		return nil, fmt.Errorf("pathDevicesDataRead: read failed: %v", err)
 	}
 
 	// Fast-path the no data case
@@ -115,58 +109,54 @@ func (b *backend) pathDevicesDataRead(ctx context.Context, req *logical.Request,
 	}
 
 	// Decode the data
-	var rawData map[string]interface{}
-
-	if err := jsonutil.DecodeJSON(out.Value, &rawData); err != nil {
-		return nil, fmt.Errorf("json decoding failed: %v", err)
+	vData := map[string]interface{}{}
+	if err := json.Unmarshal(out, &vData); err != nil {
+		return nil, err
 	}
+	//rawData["Data"] = out
+	return &logical.Response{
+		//Secret: &logical.Secret{},
+		Data: map[string]interface{}{
+			"data": vData,
+		},
+	}, nil
 
-	var resp *logical.Response
-	if b.generateLeases {
-		// Generate the response
-		resp = b.Secret("pkcs11").Response(rawData, nil)
-		resp.Secret.Renewable = false
-	} else {
-		resp = &logical.Response{
-			Secret: &logical.Secret{},
-			Data:   rawData,
-		}
-	}
+	// var resp *logical.Response
+	// if b.generateLeases {
+	// 	// Generate the response
+	// 	resp = b.Secret("pkcs11").Response(rawData, nil)
+	// 	resp.Secret.Renewable = false
+	// } else {
+	// 	resp = &logical.Response{
+	// 		Secret: &logical.Secret{},
+	// 		Data:   rawData,
+	// 	}
+	// }
 
-	// Ensure seal wrapping is carried through if the response is
-	// response-wrapped
-	if out.SealWrap {
-		if resp.WrapInfo == nil {
-			resp.WrapInfo = &wrapping.ResponseWrapInfo{}
-		}
-		resp.WrapInfo.SealWrap = out.SealWrap
-	}
+	// // Check if there is a ttl key
+	// ttlDuration := b.System().DefaultLeaseTTL()
+	// ttlRaw, ok := rawData["ttl"]
+	// if !ok {
+	// 	ttlRaw, ok = rawData["lease"]
+	// }
+	// if ok {
+	// 	dur, err := parseutil.ParseDurationSecond(ttlRaw)
+	// 	if err == nil {
+	// 		ttlDuration = dur
+	// 	}
 
-	// Check if there is a ttl key
-	ttlDuration := b.System().DefaultLeaseTTL()
-	ttlRaw, ok := rawData["ttl"]
-	if !ok {
-		ttlRaw, ok = rawData["lease"]
-	}
-	if ok {
-		dur, err := parseutil.ParseDurationSecond(ttlRaw)
-		if err == nil {
-			ttlDuration = dur
-		}
+	// 	if b.generateLeases {
+	// 		resp.Secret.Renewable = true
+	// 	}
+	// }
 
-		if b.generateLeases {
-			resp.Secret.Renewable = true
-		}
-	}
+	// resp.Secret.TTL = ttlDuration
 
-	resp.Secret.TTL = ttlDuration
-
-	return resp, nil
+	// return resp, nil
 
 }
 
-// pathDevicesList corresponds to LIST devices/ and is used to list all Devices
-// in the system.
+// pathDevicesList corresponds to LIST devices/:device_name and is used to list all data objects at the root level of the device
 func (b *backend) pathDevicesDataRootList(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
 	b.Logger().Debug("pathDevicesDataRootList", "FieldData", spew.Sdump(d))
 	nameRaw, ok := d.GetOk("device_name")
@@ -192,8 +182,7 @@ func (b *backend) pathDevicesDataRootList(ctx context.Context, req *logical.Requ
 
 }
 
-// pathDevicesList corresponds to LIST devices/ and is used to list all Devices
-// in the system.
+// pathDevicesList corresponds to LIST devices/:device_name/:path and is used to list all data objects in the key
 func (b *backend) pathDevicesDataList(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
 	b.Logger().Debug("pathDevicesDataList", "FieldData", spew.Sdump(d))
 	nameRaw, ok := d.GetOk("device_name")
@@ -223,7 +212,7 @@ func (b *backend) pathDevicesDataList(ctx context.Context, req *logical.Request,
 
 }
 
-// pathKeysWrite corresponds to PUT/POST devices/:name and creates a
+// pathKeysWrite corresponds to PUT/POST devices/:device_name/:path and creates a
 // new data object in the HSM
 func (b *backend) pathDevicesDataWrite(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
 
@@ -270,8 +259,8 @@ func (b *backend) pathDevicesDataWrite(ctx context.Context, req *logical.Request
 
 }
 
-// pathKeysDelete corresponds to PUT/POST devices/delete/:key and deletes an
-// existing device
+// pathKeysDelete corresponds to DELETE devices/:device_name/:path and deletes an
+// existing data object
 func (b *backend) pathDevicesDataDelete(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
 	nameRaw, ok := d.GetOk("device_name")
 	if !ok {

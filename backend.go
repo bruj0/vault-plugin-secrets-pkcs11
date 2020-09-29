@@ -32,6 +32,7 @@ type pkcs11Client struct {
 type backend struct {
 	*framework.Backend
 
+	//maps devices to pkcs11 clients
 	clients map[string]*pkcs11Client
 	// ctx and ctxCancel are used to control overall plugin shutdown. These
 	// contexts are given to any client libraries or requests that should be
@@ -55,7 +56,7 @@ func Factory(ctx context.Context, c *logical.BackendConfig) (logical.Backend, er
 func Backend() *backend {
 	var b backend
 
-	b.generateLeases = true
+	b.generateLeases = false
 	b.clients = make(map[string]*pkcs11Client)
 	b.ctx, b.ctxCancel = context.WithCancel(context.Background())
 

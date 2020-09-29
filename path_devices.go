@@ -108,8 +108,7 @@ func (b *backend) pathDevicesList(ctx context.Context, req *logical.Request, d *
 	return logical.ListResponse(devices), nil
 }
 
-// pathKeysWrite corresponds to PUT/POST devices/create/:name and creates a
-// new GCP KMS key and registers it for use in Vault.
+// pathKeysWrite corresponds to PUT/POST devices/:name and creates a new device object in Vault
 func (b *backend) pathDevicesWrite(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
 
 	nameRaw, ok := d.GetOk("device_name")
@@ -170,7 +169,7 @@ func (b *backend) pathDevicesWrite(ctx context.Context, req *logical.Request, d 
 	return nil, nil
 }
 
-// pathKeysDelete corresponds to PUT/POST devices/delete/:key and deletes an
+// pathKeysDelete corresponds to DELETE devices/:key and deletes an
 // existing device
 func (b *backend) pathDevicesDelete(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
 	name := d.Get("device_name").(string)

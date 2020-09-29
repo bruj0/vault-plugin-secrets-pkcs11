@@ -128,35 +128,98 @@ func (b *backend) NewPkcs11Client(s logical.Storage, deviceName string) (*pkcs11
 	}
 	return cHandler, closer, nil
 }
+func (b *backend) readData(deviceName, path string) (buf []byte, err error) {
+	cHandler := b.clients[deviceName]
+	//b.Logger().Debug(spew.Sdump(cHandler))
+	//search for the object by label
+	label := fmt.Sprintf("vault_path=%s/%s", deviceName, path)
+	objHandle, err := b.findObject(pkcs11.CKO_DATA, label, deviceName)
+	if err != nil {
+		return nil, fmt.Errorf("storeData:error while searching for data object by label: %w", err)
+	}
+
+	//object found
+	if objHandle == 0 {
+		b.Logger().Debug("storeData: data object NOT found", label)
+		return nil, fmt.Errorf("object not found")
+	}
+	attributes := []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_VALUE, nil),
+	}
+	//b.Logger().Debug(spew.Sdump(cHandler))
+	//b.Logger().Debug(spew.Sdump(attributes))
+	attr, err := cHandler.p.GetAttributeValue(cHandler.sess, objHandle, attributes)
+
+	b.Logger().Debug(spew.Sdump("readData: GetAttributeValue", attr))
+
+	for i, a := range attr {
+		b.Logger().Debug("readData: attr ", i, "type", a.Type, "valuelen", len(a.Value))
+		if a.Type == pkcs11.CKA_VALUE {
+			return []byte(a.Value), nil
+		}
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("storeData: failed to write data to hsm: %w", err)
+	}
+
+	return []byte("test"), nil
+
+}
 func (b *backend) storeData(deviceName, path string, buf []byte) (err error) {
 	/*
-		CK_OBJECT_CLASS class = CKO_DATA;
-		CK_UTF8CHAR label[] = “A data object”;
-		CK_UTF8CHAR application[] = “An application”;
-		CK_BYTE data[] = “Sample data”;
-		CK_BBOOL true = CK_TRUE;
-		CK_ATTRIBUTE template[] = {
-		  {CKA_CLASS, &class, sizeof(class)},
-		  {CKA_TOKEN, &true, sizeof(true)}, //to false if not persistent
-		  {CKA_LABEL, label, sizeof(label)-1},
-		  {CKA_APPLICATION, application, sizeof(application)-1},
-		  {CKA_VALUE, data, sizeof(data)},
-		  {CKA_PRIVATE}
+			CK_OBJECT_CLASS class = CKO_DATA;
+			CK_UTF8CHAR label[] = “A data object”;
+			CK_UTF8CHAR application[] = “An application”;
+			CK_BYTE data[] = “Sample data”;
+			CK_BBOOL true = CK_TRUE;
+			CK_ATTRIBUTE template[] = {
+			  {CKA_CLASS, &class, sizeof(class)},
+			  {CKA_TOKEN, &true, sizeof(true)}, //to false if not persistent
+			  {CKA_LABEL, label, sizeof(label)-1},
+			  {CKA_APPLICATION, application, sizeof(application)-1},
+			  {CKA_VALUE, data, sizeof(data)},
+			  {CKA_PRIVATE}
 
-		};
+			};
+		idInt, err := rand.Int(rand.Reader, big.NewInt(math.MaxUint32))
+		if err != nil {
+			return fmt.Errorf("storeData: error generating random id: %w", err)
+		}
+		id := idInt.String()
 	*/
+
 	cHandler := b.clients[deviceName]
+	//b.Logger().Debug(spew.Sdump(cHandler))
+	//search for the object by label
+	label := fmt.Sprintf("vault_path=%s/%s", deviceName, path)
+	objHandle, err := b.findObject(pkcs11.CKO_DATA, label, deviceName)
+	if err != nil {
+		return fmt.Errorf("storeData:error while searching for data object by label: %w", err)
+	}
+
+	//update operation started
+	if objHandle != 0 {
+		b.Logger().Debug("storeData: data object found, destroying it and recreating", label)
+		err = cHandler.p.DestroyObject(cHandler.sess, objHandle)
+		if err != nil {
+			return fmt.Errorf("storeData: failed to destroy data object: %w", err)
+		}
+	}
+	//update opration ended
+
+	//create operation started
 	attributes := []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_DATA),
 		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
 		pkcs11.NewAttribute(pkcs11.CKA_PRIVATE, true),
 		pkcs11.NewAttribute(pkcs11.CKA_MODIFIABLE, true),
-		pkcs11.NewAttribute(pkcs11.CKA_LABEL, fmt.Sprintf("path=%s/%s", deviceName, path)),
+		pkcs11.NewAttribute(pkcs11.CKA_LABEL, label),
 		pkcs11.NewAttribute(pkcs11.CKA_APPLICATION, fmt.Sprintf("HashiCorp Vault pkcs11 secret")),
 		pkcs11.NewAttribute(pkcs11.CKA_VALUE, []byte(buf)),
 	}
-	b.Logger().Debug(spew.Sdump(cHandler))
-	b.Logger().Debug(spew.Sdump(attributes))
+	//b.Logger().Debug(spew.Sdump(cHandler))
+	//b.Logger().Debug(spew.Sdump(attributes))
 	_, err = cHandler.p.CreateObject(cHandler.sess, attributes)
 	if err != nil {
 		return fmt.Errorf("storeData: failed to write data to hsm: %w", err)
@@ -164,30 +227,15 @@ func (b *backend) storeData(deviceName, path string, buf []byte) (err error) {
 
 	return nil
 }
-func (b *backend) ensureKey(deviceName string) error {
-	cHandler := b.clients[deviceName]
-	objHandle, err := b.findObject(pkcs11.CKO_SECRET_KEY, cHandler.device.ObjID, deviceName)
-	if err != nil {
-		return fmt.Errorf("ensureKey:error while searching for HSM encryption key object handle: %w", err)
-	}
 
-	if objHandle == 0 {
-		return fmt.Errorf("ensureKey:HSM encryption key not found")
-	}
-
-	b.Logger().Debug("ensureKey: Found object id:%v", cHandler.device.ObjID)
-	return nil
-}
-
-func (b *backend) findObject(class, objID uint, deviceName string) (pkcs11.ObjectHandle, error) {
+func (b *backend) findObject(class uint, label string, deviceName string) (pkcs11.ObjectHandle, error) {
 	cHandler := b.clients[deviceName]
 	session := cHandler.sess
 	attributes := []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_CLASS, class),
-		pkcs11.NewAttribute(pkcs11.CKA_OBJECT_ID, objID),
+		pkcs11.NewAttribute(pkcs11.CKA_LABEL, label),
 	}
-	attributes = append(attributes, pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_AES))
-
+	b.Logger().Debug("findObject", spew.Sdump("Searching for:%s", attributes))
 	err := cHandler.p.FindObjectsInit(session, attributes)
 	if err != nil {
 		return 0, fmt.Errorf("findObject: could not initialize object lookup: %w", err)
@@ -196,14 +244,15 @@ func (b *backend) findObject(class, objID uint, deviceName string) (pkcs11.Objec
 
 	objs, moreFound, err := cHandler.p.FindObjects(session, 1)
 	if err != nil {
-		return 0, fmt.Errorf("findObject: could not look up object with id %v: %w", objID, err)
+		return 0, fmt.Errorf("findObject: could not look up object with id %v: %w", label, err)
 	}
 	if len(objs) == 0 {
+		b.Logger().Debug("findObject: found 0 objects")
 		return 0, nil
 	}
 	if moreFound {
-		return 0, fmt.Errorf("findObject: expected to find one object with id %v, found %d", objID, len(objs))
+		return 0, fmt.Errorf("findObject: expected to find one object with id %v, found %d", label, len(objs))
 	}
-	b.Logger().Debug("findObject: %#v", objs)
+	b.Logger().Debug(spew.Sdump("findObject:", objs))
 	return objs[0], nil
 }
