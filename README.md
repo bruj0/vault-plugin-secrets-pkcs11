@@ -60,3 +60,5 @@ $vault read  pkcs11/devices/my-device/foo3 -format=json
 
 
 # License
+
+Mozilla Public License Version 2.0
