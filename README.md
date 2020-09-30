@@ -51,13 +51,28 @@ $vault read  pkcs11/devices/my-device/foo3 -format=json
   "warnings": null
 }
 ```
+# Verification 
+
+```
+$ pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so --slot 229915468 --login --pin 1234 -O
+Data object 2
+  label:          'vault_path=my-device/foo3'
+  application:    'HashiCorp Vault pkcs11 secret'
+  app_id:         <empty>
+  flags:           modifiable private
+
+$ pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so --slot 229915468 --login --pin 1234 -r --label 'vault_path=my-device/foo3' --type data
+{"bar":"foo"}⏎
+```
+
+
 
 # TODO
 
 - [ ] Add Leases to data objects
 - [ ] Add other types of objects
 - [ ] Add full testing coverage
-
+- [ ] Add write/destroy-only objects
 
 # License
 
